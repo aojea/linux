@@ -21,6 +21,7 @@ TEST_PROGS += nf_nat_edemux.sh
 TEST_PROGS += nft_audit.sh
 TEST_PROGS += nft_concat_range.sh
 TEST_PROGS += nft_conntrack_helper.sh
+TEST_PROGS += nft_conntrack_reject_established.sh
 TEST_PROGS += nft_fib.sh
 TEST_PROGS += nft_flowtable.sh
 TEST_PROGS += nft_meta.sh
