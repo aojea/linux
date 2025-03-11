@@ -17,6 +17,7 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6.h>
+#include <net/netfilter/nf_conntrack_acct.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
 #include <net/netfilter/nf_conntrack_ecache.h>
 #include <net/netfilter/nf_conntrack_timeout.h>
@@ -80,6 +81,35 @@ static bool udp_error(struct sk_buff *skb,
 	return false;
 }
 
+static void nf_ct_refresh_udp(struct nf_conn *ct,
+			     enum ip_conntrack_dir dir,
+			     u32 len, u32 extra_jiffies)
+{
+       /* Only update if this is not a fixed timeout */
+       if (test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status))
+	       return nf_ct_acct_update(ct, dir, len);
+
+       switch (dir) {
+       case IP_CT_DIR_ORIGINAL:
+	       /* do not refresh in original dir, else stale dnat mapping
+		* can be kept alive indefinitely.
+		*/
+	       if (nf_ct_is_confirmed(ct))
+		       return nf_ct_acct_update(ct, dir, len);
+	       break;
+       case IP_CT_DIR_REPLY:
+	       extra_jiffies += nfct_time_stamp;
+	       break;
+       case IP_CT_DIR_MAX: /* silence warning wrt. unhandled enum */
+	       break;
+       }
+
+       if (READ_ONCE(ct->timeout) != extra_jiffies)
+	       WRITE_ONCE(ct->timeout, extra_jiffies);
+
+       nf_ct_acct_update(ct, dir, len);
+}
+
 /* Returns verdict for packet, and may modify conntracktype */
 int nf_conntrack_udp_packet(struct nf_conn *ct,
 			    struct sk_buff *skb,
@@ -114,7 +144,7 @@ int nf_conntrack_udp_packet(struct nf_conn *ct,
 			stream = (status & IPS_ASSURED) == 0;
 		}
 
-		nf_ct_refresh_acct(ct, ctinfo, skb, extra);
+		nf_ct_refresh_udp(ct, CTINFO2DIR(ctinfo), skb->len, extra);
 
 		/* never set ASSURED for IPS_NAT_CLASH, they time out soon */
 		if (unlikely((status & IPS_NAT_CLASH)))
@@ -124,7 +154,7 @@ int nf_conntrack_udp_packet(struct nf_conn *ct,
 		if (stream && !test_and_set_bit(IPS_ASSURED_BIT, &ct->status))
 			nf_conntrack_event_cache(IPCT_ASSURED, ct);
 	} else {
-		nf_ct_refresh_acct(ct, ctinfo, skb, timeouts[UDP_CT_UNREPLIED]);
+		nf_ct_refresh_udp(ct, CTINFO2DIR(ctinfo), skb->len, timeouts[UDP_CT_UNREPLIED]);
 	}
 	return NF_ACCEPT;
 }
